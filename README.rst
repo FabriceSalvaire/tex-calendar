@@ -7,8 +7,6 @@ A Perl script to generate a (French) custom calendar and an agenda using pdflate
 Un Perl script pour générer via pdflatex un calendrier et un agenda personnalisable avec les
 vacances scolaires Française (zone A, B et C).
 
-:Info: The home page of tex-calendar is located at http://fabricesalvaire.github.com/tex-calendar
-
 Source Repository
 -----------------
 
