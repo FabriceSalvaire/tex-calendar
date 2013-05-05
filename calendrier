@@ -1,0 +1,722 @@
+#! /usr/bin/env perl
+# -*- perl -*-
+
+####################################################################################################
+#
+# tex-calendar - A Perl script to generate a (French) calendar and an agenda using pdflatex.
+# Copyright (C) 2008 Salvaire Fabrice
+#
+####################################################################################################
+
+####################################################################################################
+#
+# Notes
+#
+
+# localisation Fr
+# check and clean the code
+# tex file steering
+
+################################################################################
+
+use warnings;
+use strict;
+
+use English;
+
+use Getopt::Long;
+use Pod::Usage;
+
+use Calendrier;
+
+use LaTeX::Document;
+use LaTeX::Environement;
+use LaTeX::Tabular;
+use LaTeX::Buffer;
+
+####################################################################################################
+
+use vars qw [ $VERSION ]; $VERSION = '0.01';
+
+################################################################################
+#
+# Options
+#
+
+my $man  = 0;
+my $help = 0;
+
+my $year = 2009;
+my $steering = undef;
+
+my $agenda   = 0;
+my $calendar = 0;
+
+my $dump = 0;
+
+#########################################
+
+# pod2usage:
+#
+# If the verbose level is 0, then only a synopsis is printed. If the verbose level is 1, then the
+# synopsis is printed along with a description (if present) of the command line options and
+# arguments. If the verbose level is 2, then the entire manual page is printed.
+
+#my $argv = "@ARGV";
+
+GetOptions(
+           'help|?'  => \$help,
+           'man'     => \$man,
+
+           'year=i'     => \$year,
+           'steering=s' => \$steering,
+           'agenda'     => \$agenda,
+           'calendar'   => \$calendar,
+           'dump'       => \$dump,
+           )
+  or pod2usage(2);
+
+pod2usage(1) if $help;
+pod2usage(-exitstatus => 0, -verbose => 2) if $man;
+
+#########################################
+
+print STDERR "Year $year\n";
+
+our $calendrier = new Calendrier ( year => $year );
+
+$calendrier->set_holidays ();
+
+$calendrier->set_dst ();
+
+if ($steering)
+{
+  print STDERR "Load steering '$steering'\n";
+
+  require $steering;
+}
+
+####################################################################################################
+
+$calendrier->dump () if ($dump);
+
+####################################################################################################
+
+my $tex_file;
+my $preambule_buffer;
+my $document_buffer;
+
+my $month_tabular;
+
+####################################################################################################
+
+sub hook_month_tabular_begin
+{
+  my ($obj, $month) = @_;
+
+  my $year = $obj->year;
+
+#  print '#', Calendrier::month_to_int ($month), " $month $year\n";
+#
+#  print ' ' x 6, join ('  | ', qw (L M M J V S D)), "\n";
+
+##   $tex_file = new LaTeX::Document ( file_name     => 'month_tabular',
+## 				    style         => 'article',
+## 				    style_options => 'a4paper' );
+## 
+##   $preambule_buffer = $tex_file->preambule ();
+##   $document_buffer  = $tex_file->document ();
+## 
+##   my $preambule = << 'END';
+## \usepackage[a4paper,noheadfoot,dvips,margin=1cm]{geometry}
+## 
+## \usepackage[utf8]{inputenc}
+## 
+## \usepackage{color}
+## \usepackage{colortbl}
+## 
+## \usepackage{wasysym}
+## 
+## \pagestyle{empty}
+## 
+## \definecolor{colorThisWeek}{gray}{0.75}
+## END
+## 
+##   $preambule_buffer->push (\$preambule);
+## 
+##   $document_buffer  = $tex_file->document ();
+
+  my $format = '|c|' . 'c' x 7 . '|';
+
+  $month_tabular = new LaTeX::Tabular ( name => 'tabular', position => 't', format => $format );
+
+  $month_tabular->hline;
+
+  $month_tabular->push ('',
+			'\\multicolumn{7}{c|}{' .
+			sprintf ('(%02d) %s %s}',
+				 Calendrier::month_to_int ($month),
+				 ucfirst $month,
+				 $year ));
+
+  $month_tabular->hline;
+
+  $month_tabular->push ('S.', qw (L M M J V S D));
+
+  $month_tabular->hline;
+}
+
+sub hook_month_tabular_end
+{
+  my ($obj, $month, $week_counter) = @_;
+
+#  print ' ' x 6, join ('  | ', (1 .. 7)), "\n";
+
+  # $month_tabular->push (map { '' } (1 .. 8)) unless ($week_counter == 6); # need to access the number of weeks
+
+  $month_tabular->hline;
+
+  $month_tabular->push ('', (1 .. 7));
+
+  $month_tabular->hline;
+
+##  $document_buffer->push ($month_tabular);
+##
+##  $tex_file->write ();
+}
+
+sub hook_month_tabular_week
+{
+  my ($obj, $month, $week_i, $this_week, @week) = @_;
+
+#  print (($this_week) ? '>' : ' ');
+#
+#  print sprintf (' #%2d ', $week_i ), join (' | ', (map { ($_ != 0) ? sprintf ('%2d', $_ ) : '  ' } @week)), "\n";
+
+  $month_tabular->LaTeX::Buffer::push ('\rowcolor{colorThisWeek}', "\n") if ($this_week);
+
+  $month_tabular->push ($week_i, map { ($_ != 0) ? $_  : '' } @week);
+}
+
+sub month_tabular
+{
+  my ($month, $week) = @_;
+
+  $calendrier->month_tabular (
+			      'hook_month_begin' => \&hook_month_tabular_begin,
+			      'hook_month_end'   => \&hook_month_tabular_end,
+			      'hook_week'        => \&hook_month_tabular_week,
+			      'month'            => $month,
+			      'week'             => $week,
+			      );
+
+  return $month_tabular;
+}
+
+# {
+#   my $week_i = 2;
+# 
+#   foreach (1 .. 1)
+#   {
+#     month_tabular (Calendrier::int_to_month ($_), $week_i);
+# 
+#     $week_i += 4;
+#   }
+# }
+
+####################################################################################################
+
+sub hook_agenda_begin
+{
+  my ($obj) = @_;
+
+  $tex_file = new LaTeX::Document ( file_name     => 'agenda',
+				    style         => 'article',
+				    style_options => 'a4paper' );
+
+  $preambule_buffer = $tex_file->preambule ();
+  $document_buffer  = $tex_file->document ();
+
+  $document_buffer->push ("% hook_agenda_begin\n");
+
+  my $preambule = << 'END';
+\usepackage[a4paper,noheadfoot,dvips,margin=1.25cm]{geometry}
+
+\usepackage[utf8]{inputenc}
+
+\usepackage{color}
+\usepackage{colortbl}
+
+\usepackage{wasysym}
+
+\definecolor{colorThisWeek}{gray}{0.75}
+
+%\pagestyle{empty}
+END
+
+  $preambule_buffer->push (\$preambule);
+
+  my $buffer = << "END";
+\\strut
+\\vfill
+\\begin{center}
+  \\Huge{\\textbf{Agenda $year}}
+\\end{center}
+\\vfill
+\\strut
+\\newpage
+%\\strut
+%\\newpage
+END
+
+  $document_buffer->push (\$buffer);
+}
+
+sub hook_agenda_end
+{
+  my ($obj) = @_;
+
+  $document_buffer->push ("% hook_agenda_end\n");
+
+  $tex_file->write ();
+}
+
+sub hook_agenda_week_begin
+{
+  my ($obj, $week_i) = @_;
+
+  my ($date_from, $date_to) = $obj->get_week_from_to ($week_i);
+
+  my $month_i = Calendrier::month_to_int ($date_from->{month});
+
+  my ($date_from_string, $date_to_string) = map { Calendrier::format_date ($_) } ($date_from, $date_to);
+
+  $document_buffer->push ("% hook_week_begin $week_i\n");
+
+  $tex_file->newpage ();
+
+  my $environement = new LaTeX::Environement ( name => 'center' );
+
+  my $trimestre = int (($month_i-1)/3) +1;
+
+  my $exp = ($trimestre == 1) ? 'er' : 'e';
+  
+  my $buffer = << "END";
+{\\Huge Semaine $week_i} \\\\[1ex]
+\$ ${trimestre}^\\mathrm{${exp}} \$ trimestre \\\\
+\\emph{du} $date_from_string \\emph{au} $date_to_string
+\\hspace{1em}
+END
+
+  $environement->push ($buffer);
+  $document_buffer->push ($environement);
+}
+
+sub hook_agenda_week_end
+{
+  my ($obj, $week_i) = @_;
+
+  $document_buffer->push ("% hook_week_end $week_i\n");
+}
+
+sub hook_agenda_day
+{
+  my ($obj, $date_i) = @_;
+
+  $document_buffer->push ("% hook_day $date_i\n");
+
+  my $date_obj = $obj->get_date ($date_i);
+
+  my ($day, $date, $month, $dst, $holiday, $moon, $season, $week_i) =
+    Calendrier::get_date_keys ($date_obj, qw (day date month dst holiday moon season week));
+
+  my $long_day = ucfirst Calendrier::short_to_long_day ($day);
+
+  my $month_i = Calendrier::month_to_int ($month);
+
+  $month = ucfirst $month;
+
+  my $date_i_minus = $obj->date_minus ($date_i);
+
+  my $tex_moon = ($moon ne '') ? $Calendrier::moon_symbole{$moon} : '';
+
+  my $tex_dst  = ($dst ne '') ? "\\clock\\ ${dst}h" : '';
+
+  my $tex_holiday = ($holiday ne '') ? "Férié \\textbf{$holiday}" : '';
+
+  my $tex_season  = "$season";
+
+  my $left_header = '';
+
+  foreach my $s ($tex_dst, $tex_holiday, $tex_season, $tex_moon)
+  {
+    if ($s ne '')
+    {
+      $left_header .= '\\ ' if ($left_header ne '');
+
+      $left_header .= $s;
+    }
+  }
+
+  my $center = new LaTeX::Environement ( name => 'center' );
+
+# my $buffer = << "END";
+# {\\small $date_i-$date_i_minus} {\\large $long_day $date $month} $tex_moon $tex_dst $tex_holiday $tex_season \\\\
+# END
+
+  my $p = '.45\linewidth';
+
+  my $format = "p{$p}cp{$p}";
+
+  my $header = new LaTeX::Tabular ( name => 'tabular', format => $format );
+  
+  $date = '$1^{\mathrm{er}}$' if ($date == 1);
+
+  $header->push (
+		 "\\small $date_i-$date_i_minus \\hfill $long_day",
+		 "\\large{\\textbf{$date}}",
+		 "$month \\hfill \\small $left_header \\normalsize");
+  
+  $center->push ($header, "\\\\");
+
+  my $tabular = new LaTeX::Tabular ( name => 'tabular', format => $format );
+  
+  for (my $i = 8; $i <= 13; $i++)
+  {
+    my ($l, $r) = map { "$_ \\dotfill" } ($i, $i+6);
+
+    $tabular->push_with_line_vspace ('.5ex', $l, '', $r);
+  }
+
+  $center->push ($tabular, "\\\\[5ex]");
+
+  $document_buffer->push ($center);
+
+  if ($day eq 'sa')
+  {
+    $tex_file->newpage;
+
+    $document_buffer->push ("\\noindent\n");
+
+    foreach (1 .. 25)
+    {
+      $document_buffer->push ("\\strut \\dotfill \\\\[1.5ex] \n");
+    }
+  }
+
+  if ($day eq 'di')
+  {
+    my $environement = new LaTeX::Environement ( name => 'center' );
+
+    my $the_month  = Calendrier::int_to_month ($month_i);
+
+    my $next_month_i = ($month_i == 12) ? 1 : $month_i +1;
+
+    my $next_month = Calendrier::int_to_month ($next_month_i);
+
+    $environement->push (month_tabular ($the_month,  $week_i));
+    $environement->push (month_tabular ($next_month, 0));
+
+    $document_buffer->push ($environement);
+  }
+}
+
+if ($agenda)
+{
+  $calendrier->agenda ( 'hook_agenda_begin'  => \&hook_agenda_begin,
+			'hook_agenda_end'    => \&hook_agenda_end,
+			'hook_week_begin'    => \&hook_agenda_week_begin,
+			'hook_week_end'      => \&hook_agenda_week_end,
+			'hook_day'           => \&hook_agenda_day,
+			);
+}
+
+####################################################################################################
+
+sub hook_calendar_begin
+{
+  my ($obj) = @_;
+
+  my $year = $obj->year;
+
+  $tex_file = new LaTeX::Document ( file_name     => 'calendar',
+				    style         => 'article',
+				    style_options => 'a4paper' );
+
+  $preambule_buffer = $tex_file->preambule ();
+  $document_buffer  = $tex_file->document ();
+
+  $document_buffer->push ("% hook_calendar_begin\n");
+
+  my $preambule = << 'END';
+\usepackage[a4paper,landscape,noheadfoot,dvips,vmargin=10mm,hmargin=5mm]{geometry}
+
+\usepackage[utf8]{inputenc}
+
+\usepackage{color}
+\usepackage{colortbl}
+
+\usepackage{wasysym}
+
+%\definecolor{zoneA}{gray}{0.00} % yellow
+%\definecolor{zoneB}{gray}{0.30} % blue
+%\definecolor{zoneC}{gray}{0.60} % red
+
+\definecolor{colorZoneA}{gray}{0.00}
+\definecolor{colorZoneB}{gray}{0.00}
+\definecolor{colorZoneC}{gray}{0.00}
+
+\definecolor{colorFerie}{gray}{0.80}
+END
+
+  $preambule .= << "END";
+\\newcommand{\\calendarTitle}{{\\huge Calendrier $year} \\\\[1cm]}
+END
+
+  $preambule_buffer->push (\$preambule);
+
+  my $buffer = << 'END';
+\pagestyle{empty}
+\setlength{\tabcolsep}{0.5mm} 
+\noindent
+\begin{center}
+\calendarTitle{}
+END
+
+  $document_buffer->push (\$buffer);
+}
+
+sub hook_calendar_end
+{
+  my ($obj) = @_;
+
+  $document_buffer->push ("% hook_calendar_end\n");
+
+  my $buffer = << 'END';
+\end{center}
+END
+
+  $document_buffer->push (\$buffer);
+
+  $tex_file->write ();
+}
+
+sub hook_calendar_month_begin
+{
+  my ($obj, $month) = @_;
+
+  if (Calendrier::month_to_int ($month) == 7)
+  {
+    # $tex_file->newpage ();
+
+    my $buffer = << 'END';
+\end{center}
+\newpage
+\noindent
+\begin{center}
+\calendarTitle{}
+END
+
+    $document_buffer->push (\$buffer);
+  }
+
+  $month_tabular = new LaTeX::Tabular ( name => 'tabular', position => 't', format => '|c|c|c|p{.10\linewidth}|' );
+
+  $month_tabular->LaTeX::Buffer::push ("% hook_month_begin $month\n");
+
+  my $month_i = Calendrier::month_to_int ($month);
+
+  my $tex_month = ucfirst $month;
+
+  $month_tabular->hline ();
+  $month_tabular->push ("\\multicolumn{4}{|c|}{$tex_month}");
+  $month_tabular->push ("\\multicolumn{4}{|c|}{$month_i}");
+  $month_tabular->hline ();
+
+  my $month_obj = $obj->get_month ($month);
+
+  my $first_of_the_month = $month_obj->[1];
+
+  if (exists $first_of_the_month->{sun})
+  {
+    my $sun = $first_of_the_month->{sun};
+    
+    foreach my $place (keys %$sun)
+    {
+      my ($sun_rise, $sun_set) = map { $sun->{$place}{$_} } qw (rise set);
+      
+      $month_tabular->push ("\\multicolumn{4}{|c|}{{\\scriptsize ${place} ${sun_rise}h ${sun_set}h}}");
+      $month_tabular->hline ();
+    }
+  }
+}
+
+sub hook_calendar_month_end
+{
+  my ($obj, $month) = @_;
+
+  $document_buffer->push ($month_tabular);
+
+  $document_buffer->push ("% hook_month_end $month\n");
+}
+
+sub hook_calendar_day
+{
+  my ($obj, $month, $date_i) = @_;
+
+  $month_tabular->LaTeX::Buffer::push ("% hook_day $date_i\n");
+
+  my $date_obj = $obj->get_month_date ($month, $date_i);
+
+  my ($day, $holiday, $dst, $moon, $season) =
+    Calendrier::get_date_keys ($date_obj, qw (day holiday dst moon season));
+
+  my $tex_moon = ($moon ne '') ? $Calendrier::moon_symbole{$moon} : '';
+
+  my $tex_dst  = ($dst  ne '') ? "\\clock\\ ${dst}h" : '';
+
+  my $tex_holiday = "{\\scriptsize $holiday}";
+  my $tex_season = "{\\scriptsize $season}";
+
+  my $format_zone = sub
+  {
+    return '{\\color{' . $_[0] . '}\\vline}';
+  };
+
+  my $vline = &$format_zone ('white');
+  
+  my %zone = ( a => $vline, b => $vline, c => $vline);
+  
+  if (exists $date_obj->{'zone'})
+  {
+    map { $zone{$_} = &$format_zone ('colorZone' . uc $_) } (@{$date_obj->{'zone'}});
+  }
+
+  my $tex_zone = ''; map { $tex_zone .= $zone{$_} } qw (a b c);
+
+  my $month_i = Calendrier::month_to_int ($month);
+
+  my $tex_week = '';
+
+  if ($day eq 'lu' || ($date_i == 1 && $month_i == 1))
+  {
+    $tex_week = '\hfill ' . $date_obj->{'week'};
+
+    # "\\LCC \\red & \\red & \\red & \\red \\\\\n" '\\ECC'
+  }
+  
+  $month_tabular->hline () if ($day eq 'lu');
+
+  if (($day eq 'sa') || ($day eq 'di') || ($holiday ne ''))
+  {
+    $month_tabular->LaTeX::Buffer::push ('\rowcolor{colorFerie}', "\n");
+  }
+
+  $month_tabular->push
+    (
+     $date_i,
+     $day,
+     "{\\setlength{\\arrayrulewidth}{1mm}$tex_zone}",
+     "$tex_moon $tex_season $tex_dst $tex_holiday $tex_week"
+     );
+
+  $month_tabular->hline ();
+
+}
+
+if ($calendar)
+{
+  $calendrier->calendar ( 'hook_calendar_begin'  => \&hook_calendar_begin,
+			  'hook_calendar_end'    => \&hook_calendar_end,
+			  'hook_month_begin'     => \&hook_calendar_month_begin,
+			  'hook_month_end'       => \&hook_calendar_month_end,
+			  'hook_day'             => \&hook_calendar_day,
+			  );
+}
+
+####################################################################################################
+
+exit (0);
+
+####################################################################################################
+
+__END__
+
+=head1 NAME
+
+calendrier - produce fr_FR agenda and calendar
+
+=head1 SYNOPSIS
+
+calendrier [options]
+
+Options:
+
+  --help            	 	brief help message
+
+  --man             	 	full documentation
+
+  --year                        2008
+
+  --steering                    Perl file to steer
+
+  --dump                        debug purpose
+
+  --agenda                      write agenda.tex
+
+  --calendar                    write calendar.tex
+
+=head1 OPTIONS
+
+=over 8
+
+=item B<-help>
+
+Print a brief help message and exits.
+
+=item B<-man>
+
+Prints the manual page and exits.
+
+=item B<-agenda>
+
+To print a A5 booklet (16 sheets linked):
+ 
+ 1) psbook -s64 agenda.ps out.ps
+      [64] [1]   [2] [63]   [62] [3]   [4] [61]   etc.
+ 
+ 2) psnup -l -pa4 -2 out.ps > out.2.ps
+      /!\ to duplex
+
+=item B<-locales>
+
+/!\ not implemented
+
+Could use env $LANG etc.
+
+=back
+
+=head1 DESCRIPTION
+
+Calendrier outputs a latex file to produce an agenda or a calendar.
+It requires Perl, some modules, GNU gcal, LaTeX, and DVI/PostScript tools.
+
+=head1 AUTHOR
+
+Copyright (C) Fabrice Salvaire 2008
+
+=head1 ADVERTISEMENT
+
+Agenda and calendar design are copyrighted!
+
+=head1 TODO
+
+check, clean, improve, add localisation, add styles, ...
+
+=cut
+
+####################################################################################################
+#
+# End
+#
+####################################################################################################

@@ -1,0 +1,7 @@
+*~
+.bzr
+.bzrignore
+calendar.aux
+calendar.log
+calendar.pdf
+calendar.tex
